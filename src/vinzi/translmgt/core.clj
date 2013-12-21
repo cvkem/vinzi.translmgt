@@ -1,6 +1,8 @@
 (ns vinzi.translmgt.core
-  (:use [clojure.pprint])
+  (:use [clojure.pprint]
+        [vinzi.tools [vSql :only [qs]]])
   (:require [clojure
+              [edn :as edn]
               [string :as str]]
             [clojure.java
              [io :as io]]
@@ -9,7 +11,9 @@
              [vDateTime :as vDate]
              [vExcept :as vExcept]
 	     [vFile :as vFile]
-             [vProperties :as vProps]]))
+             [vProperties :as vProps]
+             [vRelation :as vRel]]
+            ))
 
 (def Props "translMgt.properties")
 
@@ -60,6 +64,17 @@
         res (map #(assoc %1 :ordinal_nr %2) res (rest (range)))]
      res))
 
+(defn write-properties 
+  "Write the props data to a (plain) property file."
+  [fName transl]
+  (let [transl (map (partial sort-by :ordinal_nr) )
+        item-str (fn [{:keys [comments key value]}]
+                   (str comments \newline
+                        (str key \= (qs value))))
+        content (->> transl
+                     (map item-str )
+                     (str/join "\n" ))]
+    (spit fName content)))
 
 ;; let global proberties
 (let [props (if (vFile/file-exists Props)
@@ -81,37 +96,36 @@
       (map #(assoc % :file path) (get-properties fName))))
 
 
-  (defn get-language-params 
+  (defn get-checked-lang-params 
     "Get the folder containing the language-package. 
      This function returns a hashmap with:
        - packageFolder:  folder containing the language pack
        - packageTail:  tail of the propertiesfiles for this language
-       - translFolder: folder containing the translations" 
+       - translFolder: folder containing the translations
+      Als ensures the translation folder exists." 
     [lang base]
-    (let [base (or base DefBase)
-          _ (dr/debug-repl)
-          transFld (vFile/filename git_repo_home translation_folder lang) ]
+    (let [lpf "(get-checked-lang-params): "
+          base (or base DefBase)
+          _ (when-not lang
+              (vExcept/throw-except lpf "required first parameter"
+                                    " <lang> missing."))
+
+          packageFolder (vFile/filename git_repo_home data_folder lang)
+          transFld (vFile/filename git_repo_home translation_folder lang)]
+      (when-not (vFile/dir-exists packageFolder)
+        (vExcept/throw-except lpf "Folder " packageFolder 
+                              " does not exist"))
       ;; create folder if it does not exists yet
       (.mkdirs (io/file transFld))
-      {:packageFolder (vFile/filename git_repo_home data_folder lang) 
+      {:packageFolder packageFolder
        :packageTail  (str "_" lang ".properties")
        :translFolder transFld
        :translFile   (vFile/filename transFld (str base "_translation.edn"))
        }))
 
 
-  (defn new-translation [[lang base & rst]]
-    (let [lpf "(new-translation): "
-          _ (when-not lang
-              (vExcept/throw-except lpf "required first parameter"
-                                    " <lang> missing."))
-         ; _ (dr/debug-repl)
-          {:keys [packageFolder packageTail
-                  translFolder translFile]} (get-language-params lang base)
-           ]
-      (notification " Generate language " lang " from source " packageFolder
-            "\n\tand emitting result to " translFile )
-      (vFile/ensure-dir-exists translFile)
+  (defn read-language-from-properties [{:keys [packageFolder packageTail]}]
+    (let [lpf "(read-language-from-properties): "]
       (let [pFiles (->> packageFolder
                     (vFile/list-files )
                    (filter #(.endsWith (.getName %) packageTail)))]
@@ -123,17 +137,44 @@
              (#(do (pprint (first %))
                    %))
         ;    (map get-properties)
-             (apply concat ))
-      )
-  ))
+             (apply concat )))))
+
+  (defn new-translation 
+    "Create a new translation file "
+    [[lang base & rst]]
+    (let [lpf "(new-translation): "
+          {:keys [packageFolder packageTail
+                  translFolder translFile] :as lPars} 
+               (get-checked-lang-params lang base)]
+      (when (vFile/file-exists translFile)
+        (vExcept/throw-except lpf " File " translFile 
+                              " exists. Can not overwrite it"))
+      (let [transl (read-language-from-properties lPars)]
+        (spit translFile (with-out-str (pprint transl))))))
+
 
   (defn check-updates 
     [lang prevBase newBase]
-    )
+    (let [pPars (get-checked-lang-params lang prevBase)
+          nPars (get-checked-lang-params lang newBase)] 
+    ))
 
   (defn expand-translation
-    [lang base]
-    )
+    [[lang base & rst]]
+    (let [lpf "(new-translation): "
+          {:keys [packageFolder packageTail
+                  translFolder translFile] :as lPars} 
+               (get-checked-lang-params lang base)]
+      (when-not (vFile/file-exists translFile)
+        (vExcept/throw-except lpf " File " translFile 
+                              " does not exists. Can not expand."))
+      (let [transl (edn/read translFile)
+            transl (->> transl 
+                        (partition-by :file ))]
+        (doseq [[fName tr] transl]
+          (write-properties fName tr)))))
+
+
 
   (defn help []
    (notification "Usage:   <command> <arg1> ...<argn>")
@@ -174,10 +215,10 @@
    
    (if (> (count args) 0)
      (case (first args)
-        "new-translation" (apply new-translation (rest args))
+        "new-translation" (new-translation (rest args))
 ;;                 (concat (list (props :base_language) "")(rest args)))
-        "expand-translation" (apply expand-translation (rest args))
-        "check-updates"       (apply check-updates (rest args))
+        "expand-translation" (expand-translation (rest args))
+        "check-updates"       (check-updates (rest args))
         "help"     (apply help (rest args))
         (do
           (warning "Incorrect command: " (first args))
