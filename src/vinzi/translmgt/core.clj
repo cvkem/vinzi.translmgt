@@ -69,7 +69,7 @@
              (do
                (warning "Could not find the property-file: " Props)
                {}))
-      {:keys [git_repo_home translation_folder 
+      {:keys [git_repo_home translation_folder data_folder
               base_language translations]} props
       translations (str/split translations #",")]
 
@@ -91,7 +91,9 @@
     (let [base (or base DefBase)
           _ (dr/debug-repl)
           transFld (vFile/filename git_repo_home translation_folder lang) ]
-      {:packageFolder (vFile/filename git_repo_home lang) 
+      ;; create folder if it does not exists yet
+      (.mkdirs (io/file transFld))
+      {:packageFolder (vFile/filename git_repo_home data_folder lang) 
        :packageTail  (str "_" lang ".properties")
        :translFolder transFld
        :translFile   (vFile/filename transFld (str base "_translation.edn"))
@@ -118,6 +120,9 @@
         (->> pFiles
              (map #(.getCanonicalPath %) )
              (map get-properties-file )
+             (#(do (pprint (first %))
+                   %))
+        ;    (map get-properties)
              (apply concat ))
       )
   ))
@@ -132,26 +137,25 @@
 
   (defn help []
    (notification "Usage:   <command> <arg1> ...<argn>")
-   (notification "Properties of the translation are stored in " Props)
    (notification "Where command is:")
-   (notification (str " - new-translation <lang> [base]: "
+   (notification (str "\n - new-translation <lang> [base]: \n"
                       " Store translation <lang> "
-                       "to the  git_repo_home/ folder as defined in " 
+                       " to the  git_repo_home/ folder as defined in " 
                        Props
                        " where [base] is prefix of the output-file."
                        " if no [base] is given the current date is used."))
-    (notification (str "expand-translation <lang> [base]:"
+    (notification (str "\n - expand-translation <lang> [base]:\n"
                        " Expands the language-pack <lang> to the set of" 
                        " individual properties paths/files. Existing files"
                        " are overwritten."))
-    (notification (str "check-updates <lang> [prevbase] [newbase]:"
+    (notification (str "\n -  check-updates <lang> [prevbase] [newbase]:\n"
                        " Check for updates in the base language and move"
                        " the updates to the translation <lang>" 
                        " So new keys are added and for existing keys it is "
                        " checked whether there are changes in the base"
                        " language. Each language item gets a status-flag"
                        " with value New, Modified, Unmodified"))
-    (notification (str "sort-translation <lang> <sort> [base]:"
+    (notification (str "\n - sort-translation <lang> <sort> [base]:\n"
                         " sort the translation and overwrite the existing"
                         " file with [base]. The <sort> should have on of"
                         " the values status-origKey, status-origValue,"
@@ -160,7 +164,9 @@
                         " Such that items with the same key are shown"
                         " next to one another (focus on consistent"
                         " translation of the same key)"
-                        )))
+                        ))
+   (notification "\nProperties of the translation are stored in " Props)
+    )
 
 ) ;; let global properties
 
@@ -172,6 +178,7 @@
 ;;                 (concat (list (props :base_language) "")(rest args)))
         "expand-translation" (apply expand-translation (rest args))
         "check-updates"       (apply check-updates (rest args))
+        "help"     (apply help (rest args))
         (do
           (warning "Incorrect command: " (first args))
           (help)))
