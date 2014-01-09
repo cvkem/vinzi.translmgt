@@ -176,11 +176,15 @@
 ;;    (edn/read-string (slurp translFile)))
 
 
+  ;; order used when writing to file
+  (def translOrderFunc #(map % [:base-lang-value :path]))
+
   (defn write-translation
     "Write a translation to an edn file."
     [translFile transl]
     (println "Writing to file: " translFile)
-    (spit translFile (with-out-str (pprint transl))))
+    (let [transl (sort-by translOrderFunc transl)] 
+      (spit translFile (with-out-str (pprint transl)))))
 
 
   (defn new-translation 
@@ -208,6 +212,7 @@
      This function returns a new translation (with actual status-flags and added
      new items.)"
     [[lang]]
+    (println "Processing language: " lang)
     (let [pars (get-checked-lang-params lang)
           bPars (get-checked-lang-params base_language)
           joinKeys [:path :key]
@@ -245,15 +250,15 @@
                                                 (assoc rec :status "ok")
                                                 rec)))))]
                             (assoc nRec :path path :key key)))
-          _ (do
-              (pprint (first currLang))
-              (pprint (first baseLang))
-              (report-count "curr-split" currLang)
-              (report-count "base-split" baseLang)
-              (print "and first from base-language")
-              (def B (take 10 (sort-by #(vec (map % joinKeys)) baseLang)))
-              (def C (take 10 (sort-by #(vec (map % joinKeys)) currLang)))
-              )
+;          _ (do
+;              (pprint (first currLang))
+;              (pprint (first baseLang))
+;              (report-count "curr-split" currLang)
+;              (report-count "base-split" baseLang)
+;              (print "and first from base-language")
+;              (def B (take 10 (sort-by #(vec (map % joinKeys)) baseLang)))
+;              (def C (take 10 (sort-by #(vec (map % joinKeys)) currLang)))
+;              )
           updatedLang (->> (set/join currLang baseLang)
 
                        ((partial report-count "joined" ))
@@ -331,7 +336,7 @@
 ) ;; let global properties
 
 (defn -main [& args]
-   
+   (println "Received args: " (str/join "," args)) 
    (if (> (count args) 0)
      (case (first args)
         "new-translation" (new-translation (rest args))
