@@ -40,42 +40,61 @@
 
 (defn get-properties 
   "Read a properties file and return the data as a sequence of maps
-   with keys (ordinal_nr, key, value, comments)."
+   with keys (linenr, key, value, comments)."
   [fName]
   (let [lpf "(get-properties): "
+        _ (println lpf fName)
         emptyProp {:key nil :value nil :comments []}
         res (with-open [inp (io/reader fName)]
               (loop [lines (line-seq inp)
                      currProp emptyProp
-                     cumm    [] ]
+                     cumm    [] 
+                     linenr  1]
                 ;;(println "cumm now is: " cumm "  and currProp=" currProp)
                 (if (seq lines)
-                  (let [line (str/trim (first lines)) ;; spaces stripped
+                  (let [line (first lines) ;; spaces stripped
                         lines (rest lines)]
                     (if (seq line)
-                      (if (.startsWith line "#") 
+                      (if (.startsWith line "#")  ;; TODO:  (re-find #"^\s*#")
                         (let [currProp (assoc currProp :comments
                                         (conj (:comments currProp) line))] 
-                          (recur lines currProp cumm)) ;; comment added
+                          (recur lines currProp cumm (inc linenr))) ;; comment added
                         (let [[k & vs] (str/split line #"=")
                               vs   (->> vs
                                         (str/join "" )
                                         (#(str/replace % "<TRANSLATE ME>" "") ))
-                              prop (assoc currProp :key (str/trim k) :value vs)
+                              prop (assoc currProp :key (str/trim k) 
+                                                   :value vs
+                                                   :linenr linenr)
                               cumm (conj cumm prop)]
-                           (recur lines emptyProp cumm))) ;; property
-                      (recur lines currProp cumm))) ;;ignore empty lines
+                           (recur lines emptyProp cumm (inc linenr)))) ;; property
+                      (recur lines currProp cumm (inc linenr)))) ;;ignore empty lines
+                  ;; add current item when nog empty
                   (if (= currProp emptyProp)
                     cumm
                     (conj cumm currProp)))))
-        res (map #(assoc %1 :ordinal_nr %2) res (rest (range)))]
+        ;; remove items without a key
+        res (filter #(seq (:key %)) res)
+;;        res (map #(assoc %1 :ordinal_nr %2) res (rest (range)))
+        remove-duplic (fn [res]
+                       (let [res (group-by :key res)
+                             res (map #(sort-by :linenr %) (vals res))
+                             select-last (fn [items]
+                                           (when (> (count items) 1)
+                                             (println "multiple items with key: " (:key (first items)) 
+                                                      " on lines: " (str/join "," (map :linenr items)) " Keeping item:")
+                                             (pprint (last items)))
+                                           (last items))
+                             res (doall (map select-last res))]
+                         res))
+        res (remove-duplic res)]
      res))
 
 
 (defn write-properties 
   "Write the props data to a (plain) property file."
   [fName transl]
-  (let [transl (sort-by :ordinal_nr transl)
+  (let [transl (sort-by :linenr transl)
         item-str (fn [{:keys [comments key value]}]
                    (let [comments (if (seq comments)
                                     (str (str/join "\n" comments) \newline)
@@ -172,12 +191,19 @@
   (defn read-translation 
     "Read the (current) language translation."
     [translFile]
-    (vEdn/read-edn-file translFile))
+    (->> translFile 
+         (vEdn/read-edn-file )
+         (map #(if (:linenr %)
+                 (dissoc % :ordinal_nr)
+                 (if-let [nr (:ordinal_nr %)]
+                   (assoc (dissoc % :ordinal_nr) :linenr nr) 
+                   %)) )
+         (map #(dissoc % :DUPLICATE) )))
 ;;    (edn/read-string (slurp translFile)))
 
 
   ;; order used when writing to file
-  (def translOrderFunc #(map % [:base-lang-value :path]))
+  (def translOrderFunc #(str/join "::" (map % [:base-lang-value :path])))
 
   (defn write-translation
     "Write a translation to an edn file."
@@ -232,23 +258,22 @@
           update-status (fn [{:keys [path key base curr] :as rec}]
                           (let [nRec (if (nil? base)
                                       (assoc curr :status "REMOVED")
-                                        (if (nil? curr)
-                                          (assoc base :base-lang-value (:value base)
-                                            :value (str (:value base) " <TRANSLATE>")
+                                      (if (nil? curr)
+                                        (assoc base :base-lang-value (:value base)
+                                            :value (str (:value base) "<T>")
                                             :status "TRANSLATE")
-                                          (let [{:keys [status value base-lang-value]} curr]
-                                            (if (not= (:value base) base-lang-value)
-                                              (let [status (if base-lang-value
-                                                             "UPDATE"
-                                                             "TRANSLATE")]
-                                                (assoc curr 
+                                        (let [{:keys [status value base-lang-value]} curr]
+                                          (if (not= (:value base) base-lang-value)
+                                            (let [status (if base-lang-value
+                                                           "UPDATE"
+                                                           "TRANSLATE")]
+                                              (assoc curr 
                                                       :base-lang-value (:value base)
-                                                      :value (str value " <" status ">")
+                                                      :value (str value "<" (first status) ">")
                                                        :status status))
-                                              (if (re-find #"<UPDATE>|<TRANSLATE>"
-                                                           value) ;; retain status
-                                                (assoc rec :status "ok")
-                                                rec)))))]
+                                            (if (re-find #"<U>|<T>|<UPDATE>|<TRANSLATE>" value) 
+                                                curr ;; retain status
+                                                (assoc curr :status "ok"))))))]
                             (assoc nRec :path path :key key)))
 ;          _ (do
 ;              (pprint (first currLang))
@@ -260,9 +285,17 @@
 ;              (def C (take 10 (sort-by #(vec (map % joinKeys)) currLang)))
 ;              )
           updatedLang (->> (set/join currLang baseLang)
-
-                       ((partial report-count "joined" ))
-                           (map update-status ))]
+                           ((partial report-count "joined" ))
+                           (map update-status ))
+          mark-duplicates (fn [tr]
+                            (let [tr (vals (group-by #(map % [:path :key]) tr))
+                                  mark-duplic (fn [x]
+                                                (if (= (count x) 1)
+                                                  x
+                                                  (map #(assoc %1 :DUPLICATE %2) x (rest (range)))))]
+                              (apply concat (map mark-duplic tr))))
+          updatedLang (mark-duplicates updatedLang)
+          ]
       (println "Updated language has: " (count updatedLang) " elements.")
     (write-translation (:translFile pars) updatedLang)))
 
