@@ -7,6 +7,7 @@
               [string :as str]]
             [clojure.java
              [io :as io]]
+            [vinzi.translmgt.excel :as xls]
             [debug-repl.debug-repl :as dr]
             [vinzi.tools 
              [vDateTime :as vDate]
@@ -99,7 +100,7 @@
                    (let [comments (if (seq comments)
                                     (str (str/join "\n" comments) \newline)
                                     "")
-                         kv (str key \= (qs value))]
+                         kv (str key \= value)]
                      (str comments kv)))
 ;;        _ (dr/debug-repl)
         content (->> transl
@@ -193,6 +194,7 @@
     [translFile]
     (->> translFile 
          (vEdn/read-edn-file )
+         ;; temporary fix (changed field names)
          (map #(if (:linenr %)
                  (dissoc % :ordinal_nr)
                  (if-let [nr (:ordinal_nr %)]
@@ -202,15 +204,25 @@
 ;;    (edn/read-string (slurp translFile)))
 
 
-  ;; order used when writing to file
-  (def translOrderFunc #(str/join "::" (map % [:base-lang-value :path])))
+  ;; order used when writing to file (all tekst mapped to lower-case)
+  (def translOrderFunc (fn [rec]
+                         (str/join "::" (map #(str/lower-case (% rec)) [:base-lang-value :path]))))
 
   (defn write-translation
     "Write a translation to an edn file."
     [translFile transl]
+    {:pre [(string? translFile) (sequential? transl)]}
     (println "Writing to file: " translFile)
     (let [transl (sort-by translOrderFunc transl)] 
-      (spit translFile (with-out-str (pprint transl)))))
+      (println "Writing the translation as edn")
+      (let [tEdn "n.v.t." 
+            tEdn (time (spit translFile (with-out-str (pprint transl))))
+            xlsFile (str (str/replace translFile #"\.\w*$" "") ".xls")
+            _ (println "Writing the translation as xls")
+            tXls (time (xls/write-as-excel xlsFile transl))] 
+        (println " writing edn took: " tEdn)
+        (println " writing xls took: " tXls))))
+
 
 
   (defn new-translation 
@@ -226,12 +238,65 @@
       (let [transl (read-language-from-properties lPars)]
         (write-translation translFile transl))))
 
+  (defn fix-translation 
+    "Create a new translation file."
+    [[lang base & rst]]
+    (let [lpf "(fix-translation): "
+          {:keys [packageFolder packageTail
+                  translFolder translFile] :as lPars} 
+               (get-checked-lang-params lang base)]
+      (let [joinKeys [:path :key]
+            keyFn   #(str (:path %) "::" (:key %))
+            trProps (->> (read-language-from-properties lPars)
+                         (map #(assoc %
+                                      :status "NEW-PROP"
+                                      :base-lang-value (:value %)) )
+                         (#(zipmap (map keyFn %) %) ))
+            trEdn   (->> (read-translation translFile)
+                         (#(zipmap (map keyFn %) %) ))
+            tr      (->> (into trProps trEdn)
+                         (vals ))
+            ;; comparison on lower-case and after trimming spaces
+            trg     (-> (group-by #(str/lower-case (str/trim (str (:base-lang-value %)))) tr)
+                        (vals ))
+            fix-group (fn [trs]
+                        (if (<= (count trs) 1)
+                          trs
+                        (let [prt-f  #(= (:status %) "NEW-PROP")
+                              edn (remove prt-f trs)
+                              edn-tr (set (map :value edn))
+                              cnt    (count edn-tr)
+                              prp (filter prt-f trs)]
+                         (if (>= cnt 1)
+                           (let [trn (first edn-tr)
+                                 status (if (= cnt 1) 
+                                          "NEW-PROP-AUTO-TRANSLATE"
+                                          (str "NEW-PROP-AUTO-OPTIONS" cnt))
+                                 prp (map #(assoc % :value trn :status status) prp)]
+                             (when (> cnt 1)
+                               (println (count edn-tr) " translations of " (:base-lang-value (first edn)) ":" 
+                                       (str/join ";" edn-tr) " Using: " trn))
+                             (map #(assoc % :base-lang-duplic (count trs)) (concat edn prp)))  ;; return fixed list
+                             trs))))  ;; return unmodified
+            trgf     (->> (map fix-group trg)
+                         (apply concat ))
+                     ]
+        (write-translation (str translFile ".fix") trgf)
+         {:trProps trProps
+          :trEdn   trEdn
+          :tr      tr
+          :trg     trg
+          :trgf    trgf}
+        )))
+
+
    (defn all-new-translations
      "Generate a new translation for all languages that exist in the data-folder"
      []
      (let [lpf "(all-new-translations): "]
        (println "To be implemented!")
        ))
+
 
   (defn check-updates 
     "Compare a base-language to the current language and update the status-flags.
@@ -300,7 +365,8 @@
     (write-translation (:translFile pars) updatedLang)))
 
 
-  (def TestEmit "/tmp/plp")
+ ;; (def TestEmit "/tmp/plp")
+  (def TestEmit nil)
 
   (defn expand-translation
     "Read the edn-file and expand it to the series of property-files (language files)."

@@ -7,7 +7,11 @@
 		[org.clojure/tools.logging "0.2.6"]
                  ;; needed only to compile vinzi.tools
                 [org.clojure/java.jdbc "0.2.3"]
+                [org.clojure/data.csv "0.1.2"]
   		[org.slf4j/slf4j-api "1.6.5"]
   		[ch.qos.logback/logback-core "1.0.6"]
   		[ch.qos.logback/logback-classic "1.0.6"]
-                 [vinzi/vinzi.tools "0.2.0-SNAPSHOT"]])
+                [vinzi/vinzi.tools "0.2.0-SNAPSHOT"]
+                [org.apache.poi/poi "3.9"]
+                [org.apache.poi/poi-ooxml "3.9"]])
+
