@@ -20,7 +20,11 @@
 
 (def Props "translMgt.properties")
 
-(def TransEdn "translation.edn")    
+(def StoreExcel true)
+
+(def TransFile (if StoreExcel
+                 "translation.xls"
+                 "translation.edn"))
 
 ;;(def DefBase (let [ymd (vDate/get-ymd-date)]
 ;;               (str/join "-" (map ymd [:year :month :day]))))
@@ -167,7 +171,7 @@
         {:packageFolder packageFolder
          :packageTail  (str "_" lang ".properties")
          :translFolder transFld
-         :translFile   (vFile/filename transFld (str base TransEdn))
+         :translFile   (vFile/filename transFld (str base TransFile))
          })))
 
 
@@ -192,16 +196,11 @@
   (defn read-translation 
     "Read the (current) language translation."
     [translFile]
-    (->> translFile 
-         (vEdn/read-edn-file )
-         ;; temporary fix (changed field names)
-         (map #(if (:linenr %)
-                 (dissoc % :ordinal_nr)
-                 (if-let [nr (:ordinal_nr %)]
-                   (assoc (dissoc % :ordinal_nr) :linenr nr) 
-                   %)) )
-         (map #(dissoc % :DUPLICATE) )))
-;;    (edn/read-string (slurp translFile)))
+    (if StoreExcel
+      (xls/read-from-excel translFile)
+      (->> translFile 
+           (vEdn/read-edn-file )
+           (map #(dissoc % :DUPLICATE) ))))
 
 
   ;; order used when writing to file (all tekst mapped to lower-case)
@@ -214,14 +213,12 @@
     {:pre [(string? translFile) (sequential? transl)]}
     (println "Writing to file: " translFile)
     (let [transl (sort-by translOrderFunc transl)] 
-      (println "Writing the translation as edn")
-      (let [tEdn "n.v.t." 
-            tEdn (time (spit translFile (with-out-str (pprint transl))))
-            xlsFile (str (str/replace translFile #"\.\w*$" "") ".xls")
-            _ (println "Writing the translation as xls")
-            tXls (time (xls/write-as-excel xlsFile transl))] 
-        (println " writing edn took: " tEdn)
-        (println " writing xls took: " tXls))))
+      (time (if StoreExcel
+              (do
+                (println "Be patient. Building a new excel workbook might take a minute ...")
+                (xls/write-as-excel translFile transl)) 
+              (spit translFile (with-out-str (pprint transl)))))
+      (println "Translation written.")))
 
 
 
@@ -238,8 +235,13 @@
       (let [transl (read-language-from-properties lPars)]
         (write-translation translFile transl))))
 
+
+
   (defn fix-translation 
-    "Create a new translation file."
+    "TEMPORARY FIX: Create a new translation file. Temporary code to merge in missing items for nl-language.
+       NOTE: This function contains code to find duplicate base-language values and code to 
+       automatically translate when strings appear multiple times in the base language
+       (marked with flag AUTO)."
     [[lang base & rst]]
     (let [lpf "(fix-translation): "
           {:keys [packageFolder packageTail
@@ -378,7 +380,7 @@
       (when-not (vFile/file-exists translFile)
         (vExcept/throw-except lpf " File " translFile 
                               " does not exists. Can not expand."))
-      (let [transl (edn/read-string (slurp translFile))
+      (let [transl (read-translation translFile)
             _ (def TRANS transl)
             transl (->> transl 
                         (group-by :path ))
@@ -404,10 +406,11 @@
                        " if no [base] is given an empty string is used"
                        " (git used for versioning).\n"
                        " The translation is written to "
-                       " <git_repo_home>/<translations>/<lang>/" TransEdn ))
+                       " <git_repo_home>/<translations>/<lang>/" TransFile ))
    (notification (str "\n - all-new-translations : \n"
                        "  For all folders in <git_repo_home>/<data_folder>"
-                       "  create a translation if it does not exist yet")) 
+                       "  create a translation if it does not exist yet" 
+                       " NOTE: to be implemented"))
     (notification (str "\n - expand-translation <lang> [base]:\n"
                        " Expands the language-pack <lang> to the set of" 
                        " individual properties paths/files. Existing files"
@@ -419,16 +422,19 @@
                        " checked whether there are changes in the base"
                        " language. Each language item gets a status-flag"
                        " with value New, Modified, Unmodified"))
-    (notification (str "\n - sort-translation <lang> <sort> [base]:\n"
-                        " sort the translation and overwrite the existing"
-                        " file with [base]. The <sort> should have on of"
-                        " the values status-origKey, status-origValue,"
-                        " origKey-status, origVal-status (case-insensitive)"
-                        " The check-updates uses ordering origKey-status"
-                        " Such that items with the same key are shown"
-                        " next to one another (focus on consistent"
-                        " translation of the same key)"
-                        ))
+    (notification (str "\n -  prune-file <lang> <filename> <filename2> ...:\n"
+                       " Remove one or more  files from the translation "
+                       " and remove the files from the output-folder too. "
+                       " NOTE: to be implemented"))
+;    (notification (str "\n - sort-translation <lang> <sort> [base]:\n"
+;                        " sort the translation and overwrite the existing"
+;                        " file with [base]. The <sort> should have on of"
+;                        " the values status-origKey, status-origValue,"
+;                        " origKey-status, origVal-status (case-insensitive)"
+;;                        " The check-updates uses ordering origKey-status"
+;                        " Such that items with the same key are shown"
+;                        " next to one another (focus on consistent"
+;                        " translation of the same key)"
    (notification "\nProperties of the translation are stored in " Props)
     )
 

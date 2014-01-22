@@ -6,26 +6,22 @@
               [string :as str]]
             [clojure.java
              [io :as io]]
-            [debug-repl.debug-repl :as dr]
-            [vinzi.clj-excel.core :as ce]
+        ;;    [debug-repl.debug-repl :as dr]
             [vinzi.tools
-             [vCsv :as vCsv]]))
+             [vCsv :as vCsv]
+             [vExcel :as vExcel]]))
 
 
 
 (defn write-as-xls 
   "Write data (sequential of similar hashmaps) to excel-file with path 'fPath'."
   [fPath data columnOrder]
-  (let [wb (ce/workbook)  ;; new/empty work-book
-        _ (println "wb=" wb "  of type " (type wb))
-        sheets (ce/sheets wb)
-        s1   (first sheets)
-        _ (println "s1=" s1  "  of type " (type s1))
+  (let [wb (vExcel/workbook)  ;; new/empty work-book
         dataArray (if (seq columnOrder)
                     (vCsv/map-seq-to-csv data columnOrder :sortHeader false)
                     (vCsv/map-seq-to-csv data))]
-    (ce/merge-rows wb 0 dataArray)
-    (ce/save wb fPath) 
+    (vExcel/merge-rows wb 0 0 dataArray)
+    (vExcel/save wb fPath) 
   ))
 
 
@@ -35,6 +31,7 @@
 (def OrderedKeys [:path :key :linenr :base-lang-duplic :base-lang-value :value :status :comments])
 
 (defn write-as-excel
+  "Write the data representing a represenation as a new excel file."
   [fPath data]
   ;;  concatenate comment to a single string (excel does not support vectors.
   (let [data (map #(assoc % :comments (str/join ConcatenateMark (map str (:comments %)))) data)]
@@ -44,13 +41,28 @@
 (defn read-from-excel
   "Read the files from excel and split comments again."
   [fPath]
-  (let [wb (ce/workbook fPath)
-        data (->> (ce/get-lazy-sheet wb 0)
+  (let [wb (vExcel/workbook fPath)
+        parse-num (fn [v]
+                    ;; outputs first matching type long, double or nil
+                    (when (seq v)   ;; empty string --> nil
+                      (let [v (Double/parseDouble v)
+                            vl (long v)]
+                        (if (= (- v vl) 0.0)
+                          vl
+                          v))))
+        data (->> (vExcel/get-lazy-sheet wb 0)
                   (vCsv/csv-to-map )
                   ;; split comments when string is not empty
-                  (map #(if-let [c (:comments %)]
-                          (assoc % :comments (str/split c ReConcatenateMark))
-                          %) ))]
+                  (map #(if-let [cmt (:comments %)]
+                          (let [cmt (str/split cmt ReConcatenateMark)
+                                cmt (if (= cmt [""])  
+                                      []    ;; replace empty array by empty array
+                                      cmt)]
+                            (assoc % :comments cmt))
+                          %) )
+                  ;; type conversions
+                  (map #(assoc %  :linenr (parse-num (:linenr %))
+                                  :base-lang-duplic (parse-num (:base-lang-duplic %))) ))] 
     data))
 
 
