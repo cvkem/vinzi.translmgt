@@ -306,6 +306,11 @@
      new items.)"
     [[lang]]
     (println "Processing language: " lang)
+    (println " ==================  WAARSCHUWING ================================\n"
+             "  code gebruikt INNER JOIN, en lines die niet in de base-language \n"
+             " bestaan worden weggegooid ipv gemarkeerd!!\n"
+             " Pas vRel aan zodat er een OUTER-JOIN in zit (relational)"
+             "===================================================================")
     (let [pars (get-checked-lang-params lang)
           bPars (get-checked-lang-params base_language)
           joinKeys [:path :key]
