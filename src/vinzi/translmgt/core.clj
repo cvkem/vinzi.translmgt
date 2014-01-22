@@ -205,13 +205,14 @@
 
   ;; order used when writing to file (all tekst mapped to lower-case)
   (def translOrderFunc (fn [rec]
-                         (str/join "::" (map #(str/lower-case (% rec)) [:base-lang-value :path]))))
+                         (str/join "::" (map #(str/lower-case (str (% rec))) [:base-lang-value :path]))))
 
   (defn write-translation
     "Write a translation to an edn file."
     [translFile transl]
     {:pre [(string? translFile) (sequential? transl)]}
     (println "Writing to file: " translFile)
+    (doseq [line (take 3 transl)] (println line))
     (let [transl (sort-by translOrderFunc transl)] 
       (time (if StoreExcel
               (do
@@ -306,69 +307,68 @@
      new items.)"
     [[lang]]
     (println "Processing language: " lang)
-    (println " ==================  WAARSCHUWING ================================\n"
-             "  code gebruikt INNER JOIN, en lines die niet in de base-language \n"
-             " bestaan worden weggegooid ipv gemarkeerd!!\n"
-             " Pas vRel aan zodat er een OUTER-JOIN in zit (relational)"
-             "===================================================================")
     (let [pars (get-checked-lang-params lang)
           bPars (get-checked-lang-params base_language)
           joinKeys [:path :key]
           report-count #(do (println %1 "seq has " (count %2) " elements") 
                            %2)
-          currLang (->  (read-translation (:translFile pars))
-                       ((partial report-count "curr" ))
-                       (vRel/split-recs joinKeys :curr))
+;          currLang (->  (read-translation (:translFile pars))
+;                       ((partial report-count "curr" ))
+;                       (vRel/split-recs joinKeys :curr))
           renamePath (fn [r] (assoc r :path 
                                (str/replace (:path r) 
                                  (re-pattern (str "_" base_language)) 
                                                     (str "_" lang)))) 
-          baseLang (-> (read-translation (:translFile bPars))
-                       ((partial report-count "baseLang" ))
-                       (vRel/split-recs joinKeys :base)
-                       (#(map renamePath %)))
-          update-status (fn [{:keys [path key base curr] :as rec}]
-                          (let [nRec (if (nil? base)
-                                      (assoc curr :status "REMOVED")
-                                      (if (nil? curr)
-                                        (assoc base :base-lang-value (:value base)
-                                            :value (str (:value base) "<T>")
-                                            :status "TRANSLATE")
-                                        (let [{:keys [status value base-lang-value]} curr]
-                                          (if (not= (:value base) base-lang-value)
-                                            (let [status (if base-lang-value
-                                                           "UPDATE"
-                                                           "TRANSLATE")]
-                                              (assoc curr 
-                                                      :base-lang-value (:value base)
-                                                      :value (str value "<" (first status) ">")
-                                                       :status status))
-                                            (if (re-find #"<U>|<T>|<UPDATE>|<TRANSLATE>" value) 
-                                                curr ;; retain status
-                                                (assoc curr :status "ok"))))))]
-                            (assoc nRec :path path :key key)))
-;          _ (do
-;              (pprint (first currLang))
-;              (pprint (first baseLang))
-;              (report-count "curr-split" currLang)
-;              (report-count "base-split" baseLang)
-;              (print "and first from base-language")
-;              (def B (take 10 (sort-by #(vec (map % joinKeys)) baseLang)))
-;              (def C (take 10 (sort-by #(vec (map % joinKeys)) currLang)))
-;              )
-          updatedLang (->> (set/join currLang baseLang)
+;          baseLang (-> (read-translation (:translFile bPars))
+;                       ((partial report-count "baseLang" ))
+;                       (vRel/split-recs joinKeys :base)
+;                       (#(map renamePath %)))
+          currLang (read-translation (:translFile pars))
+          baseLang (let [renamePath (fn [r] 
+                                      (assoc r :path (str/replace (:path r) 
+                                                        (re-pattern (str "_" base_language)) 
+                                                        (str "_" lang))))]
+                     (-> (read-translation (:translFile bPars))
+                         (#(map renamePath %))) )
+          updatedLang (let [update-status 
+                              ;; local function to update status of alle records
+                              (fn [{:keys [path key base curr] :as rec}]
+                                (let [nRec (if (nil? base)
+                                             (assoc curr :status "REMOVED")
+                                             (if (nil? curr)
+                                               (assoc base :base-lang-value (:value base)
+                                                   :value (str (:value base) "<T>")
+                                                   :status "TRANSLATE")
+                                               (let [{:keys [status value base-lang-value]} curr]
+                                                 (if (not= (:value base) base-lang-value)
+                                                   (let [status (if base-lang-value
+                                                                  "UPDATE"
+                                                                  "TRANSLATE")]
+                                                     (assoc curr 
+                                                             :base-lang-value (:value base)
+                                                             :value (str value "<" (first status) ">")
+                                                              :status status))
+                                                   (if (re-find #"<U>|<T>|<UPDATE>|<TRANSLATE>" value) 
+                                                       curr ;; retain status
+                                                       (assoc curr :status "ok"))))))]
+                                   (assoc nRec :path path :key key)))
+                            ;; routine to mark duplicates
+                            mark-duplicates 
+                             (fn [tr]
+                               (let [tr (vals (group-by #(map % [:path :key]) tr))
+                                     mark-duplic (fn [x]
+                                                   (if (= (count x) 1)
+                                                     x
+                                                     (map #(assoc %1 :DUPLICATE %2) x (rest (range)))))]
+                                 (apply concat (map mark-duplic tr)))) ]
+                        ;; main part that does the processing
+                        (->> (vRel/full-outer-join [currLang baseLang] joinKeys [:curr :base])
                            ((partial report-count "joined" ))
-                           (map update-status ))
-          mark-duplicates (fn [tr]
-                            (let [tr (vals (group-by #(map % [:path :key]) tr))
-                                  mark-duplic (fn [x]
-                                                (if (= (count x) 1)
-                                                  x
-                                                  (map #(assoc %1 :DUPLICATE %2) x (rest (range)))))]
-                              (apply concat (map mark-duplic tr))))
-          updatedLang (mark-duplicates updatedLang)
-          ]
-      (println "Updated language has: " (count updatedLang) " elements.")
+                           (map update-status )
+                           (mark-duplicates )) )]
+    (println "Updated language has: " (count updatedLang) " elements.\n"
+             "Status-fields are:\n"
+             (with-out-str (pprint (frequencies (map :status updatedLang)))))
     (write-translation (:translFile pars) updatedLang)))
 
 
