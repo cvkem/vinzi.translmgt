@@ -15,11 +15,14 @@ mark properties according to their status.
 ## Usage
 
 Build the big-jar from code, or download it from:
+
    www.vinzi.eu:890/translmgt
+
 Put the translMgt.properties in the current folder and adjust it
 to your local setup.
 
 Run the main program via
+
 java -cp vinzi.transmgt-standalone.jar clojure.main -m vinzi.transmgt.core help
 
 This will compile and run the program and show a short note about usage.
